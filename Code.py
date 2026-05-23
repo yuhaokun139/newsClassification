@@ -1,27 +1,33 @@
 import streamlit as st
-import tempfile
-from PIL import Image
 import torch
-from transformers import AutoImageProcessor, AutoModelForImageClassification, BlipProcessor, BlipForConditionalGeneration
+from PIL import Image
+from transformers import (
+    AutoImageProcessor,
+    AutoModelForImageClassification,
+    BlipProcessor,
+    BlipForConditionalGeneration
+)
 import warnings
 warnings.filterwarnings("ignore")
 
 # ==========================
 # Page config
-st.set_page_config(page_title="Image Classifier & Object Tagger", layout="wide")
-st.title("🖼️ Image Classifier & Object Tagger")
-st.markdown("Upload an image – This program will classify the main subject and generate object labels with descriptions.")
+st.set_page_config(page_title="Grocery Product Classifier", layout="wide")
+st.title("🛒 Grocery Product Classifier & Tagging")
+st.markdown("Upload a product image – AI will identify the product category and generate detailed tags.")
 
 # ==========================
-# 1. Load image classification model (ConvNeXt / ViT)
+# 1. Load grocery classification model (fine-tuned ConvNeXt / ViT / Swin)
 @st.cache_resource
-def load_image_classifier():
-    processor = AutoImageProcessor.from_pretrained("facebook/convnext-large-224")
-    model = AutoModelForImageClassification.from_pretrained("facebook/convnext-large-224")
+def load_grocery_classifier():
+    model_id = "facebook/convnext-tiny-224"
+    
+    processor = AutoImageProcessor.from_pretrained(model_id)
+    model = AutoModelForImageClassification.from_pretrained(model_id)
     model.eval()
     return processor, model
 
-# 2. Load image captioning model (BLIP)
+# 2. Load image captioning model (BLIP) for fine-grained tag generation
 @st.cache_resource
 def load_blip_model():
     processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
@@ -29,8 +35,8 @@ def load_blip_model():
     model.eval()
     return processor, model
 
-# 3. Predict image category (object classification)
-def predict_image_category(image, processor, model):
+# 3. Predict product category
+def predict_category(image, processor, model):
     inputs = processor(images=image, return_tensors="pt")
     with torch.no_grad():
         outputs = model(**inputs)
@@ -41,7 +47,7 @@ def predict_image_category(image, processor, model):
     label = model.config.id2label[predicted_idx]
     return label, confidence
 
-# 4. Generate detailed object description using BLIP
+# 4. Generate detailed description using BLIP
 def generate_description(image, blip_processor, blip_model):
     inputs = blip_processor(image, return_tensors="pt")
     with torch.no_grad():
@@ -49,50 +55,45 @@ def generate_description(image, blip_processor, blip_model):
     caption = blip_processor.decode(out[0], skip_special_tokens=True)
     return caption
 
-# 5. Extract simple tags from the generated caption
-def extract_tags(caption):
-    stopwords = {"a", "an", "the", "of", "to", "and", "in", "is", "are", "was", "were",
-                 "this", "that", "these", "those", "for", "with", "on", "at", "by", "behind", "front"}
-    words = caption.lower().split()
-    tags = [w for w in words if w.isalpha() and w not in stopwords and len(w) > 2]
-    unique_tags = list(dict.fromkeys(tags))[:8]
-    return unique_tags
-
 # ==========================
 # Main UI
-uploaded_file = st.file_uploader("📁 Choose an image file", type=["jpg", "jpeg", "png", "bmp"])
+uploaded_file = st.file_uploader("📁 Choose an image of a grocery product", type=["jpg", "jpeg", "png", "bmp"])
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        st.image(image, caption="Uploaded Image", use_container_width=True)
+        st.image(image, caption="Uploaded Product Image", use_container_width=True)
 
     # Load models (cached)
     with st.spinner("⏳ Loading..."):
-        cls_processor, cls_model = load_image_classifier()
+        cls_processor, cls_model = load_grocery_classifier()
         blip_processor, blip_model = load_blip_model()
 
-    # Classify main object
-    with st.spinner("🏷️ Recognizing..."):
-        category, conf = predict_image_category(image, cls_processor, cls_model)
+    # Classify product category
+    with st.spinner("🏷️ Recognizing product category..."):
+        category, conf = predict_category(image, cls_processor, cls_model)
 
-    # Generate description and tags
-    with st.spinner("📝 Generating object description..."):
+    # Generate fine-grained description
+    with st.spinner("📝 Generating product description and tags..."):
         caption = generate_description(image, blip_processor, blip_model)
     tags = extract_tags(caption)
 
     # Show results
     with col2:
         st.success("✅ Analysis complete!")
-        st.subheader("🏷️ Main Object Category")
+        
+        st.subheader("🏷️ Product Category")
         st.write(f"**{category}**  (confidence: {conf:.2%})")
         
-        st.subheader("📖 Object Description")
+        st.subheader("📖 Product Description")
         st.write(caption)
         
-        st.subheader("🔖 Extracted Tags")
-        st.markdown(", ".join([f"`{tag}`" for tag in tags]))
+        st.subheader("🔖 Fine-grained Tags")
+        if tags:
+            st.markdown(", ".join([f"`{tag}`" for tag in tags]))
+        else:
+            st.write("No tags extracted.")
 else:
-    st.info("👆 Please upload an image to get started.")
+    st.info("👆 Please upload an image of a grocery product to get started.")
